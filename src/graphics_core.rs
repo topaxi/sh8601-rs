@@ -1,5 +1,5 @@
 use crate::{ControllerInterface, DrawTarget, ResetInterface, Sh8601Driver};
-use embedded_graphics_core::{pixelcolor::Rgb888, prelude::*};
+use embedded_graphics_core::{pixelcolor::Rgb888, prelude::*, primitives::Rectangle};
 
 impl<IFACE, RST> DrawTarget for Sh8601Driver<IFACE, RST>
 where
@@ -48,17 +48,36 @@ where
         let g = (c >> 8) as u8;
         let b = c as u8;
 
-        // Fast path for uniform colors (black, white, grayscale)
-        if r == g && r == b {
-            self.framebuffer.fill(r);
+        fill_framebuffer_with_color(&mut self.framebuffer, r, g, b);
 
+        Ok(())
+    }
+
+    /// Optimized fill for solid color rectangles
+    fn fill_solid(&mut self, area: &Rectangle, color: Self::Color) -> Result<(), Self::Error> {
+        let drawable_area = area.intersection(&self.bounding_box());
+
+        if drawable_area.size == Size::zero() {
             return Ok(());
         }
 
-        for chunk in self.framebuffer.chunks_exact_mut(3) {
-            chunk[0] = r;
-            chunk[1] = g;
-            chunk[2] = b;
+        let display_width = self.config.width as usize;
+        let start_x = drawable_area.top_left.x as usize;
+        let start_y = drawable_area.top_left.y as usize;
+        let rect_width = drawable_area.size.width as usize;
+        let rect_height = drawable_area.size.height as usize;
+
+        let c = color.into_storage();
+        let r = (c >> 16) as u8;
+        let g = (c >> 8) as u8;
+        let b = c as u8;
+
+        for row in 0..rect_height {
+            let y = start_y + row;
+            let row_start = (y * display_width + start_x) * 3;
+            let row_end = row_start + rect_width * 3;
+
+            fill_framebuffer_with_color(&mut self.framebuffer[row_start..row_end], r, g, b);
         }
 
         Ok(())
@@ -128,6 +147,20 @@ where
         }
 
         Ok(())
+    }
+}
+
+fn fill_framebuffer_with_color(framebuffer: &mut [u8], r: u8, g: u8, b: u8) {
+    // Fast path for uniform colors (black, white, grayscale)
+    if r == g && r == b {
+        framebuffer.fill(r);
+        return;
+    }
+
+    for chunk in framebuffer.chunks_exact_mut(3) {
+        chunk[0] = r;
+        chunk[1] = g;
+        chunk[2] = b;
     }
 }
 
