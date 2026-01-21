@@ -16,16 +16,31 @@ where
     where
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
-        for Pixel(Point { x, y }, color) in pixels.into_iter() {
-            if x >= 0 && x < self.config.width as i32 && y >= 0 && y < self.config.height as i32 {
-                let index =
-                    coordinates_to_index(x as usize, y as usize, self.config.width as usize);
+        let width = self.config.width as i32;
+        let height = self.config.height as i32;
+        let fb = &mut self.framebuffer;
 
-                if index + 2 < self.framebuffer.len() {
-                    write_framebuffer(&mut self.framebuffer, index, color);
-                }
+        for Pixel(coord, color) in pixels {
+            let x = coord.x;
+            let y = coord.y;
+
+            // Single combined bounds check
+            if (x | y) < 0 || x >= width || y >= height {
+                continue;
             }
+
+            let idx = (y as usize * width as usize + x as usize) * 3;
+
+            if idx + 2 >= fb.len() {
+                continue;
+            }
+
+            let rgb = color.into_storage();
+            fb[idx] = (rgb >> 16) as u8;
+            fb[idx + 1] = (rgb >> 8) as u8;
+            fb[idx + 2] = rgb as u8;
         }
+
         Ok(())
     }
 
