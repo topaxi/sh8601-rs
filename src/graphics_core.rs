@@ -16,25 +16,13 @@ where
     where
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
-        for Pixel(coord, color) in pixels.into_iter() {
-            if coord.x >= 0
-                && coord.x < self.config.width as i32
-                && coord.y >= 0
-                && coord.y < self.config.height as i32
-            {
-                let x = coord.x as u32;
-                let y = coord.y as u32;
-                let index = ((y * self.config.width as u32 + x) * 3) as usize;
+        for Pixel(Point { x, y }, color) in pixels.into_iter() {
+            if x >= 0 && x < self.config.width as i32 && y >= 0 && y < self.config.height as i32 {
+                let index =
+                    coordinates_to_index(x as usize, y as usize, self.config.width as usize);
 
                 if index + 2 < self.framebuffer.len() {
-                    let c = color.into_storage();
-                    let r = (c >> 16) as u8; // 8-bit Red
-                    let g = (c >> 8) as u8; // 8-bit Green
-                    let b = c as u8; // 8-bit Blue
-
-                    self.framebuffer[index] = r;
-                    self.framebuffer[index + 1] = g;
-                    self.framebuffer[index + 2] = b;
+                    write_color_to_framebuffer(&mut self.framebuffer, index, color);
                 }
             }
         }
@@ -48,12 +36,15 @@ where
         let g = (c >> 8) as u8;
         let b = c as u8;
 
-        fill_framebuffer_with_color(&mut self.framebuffer, r, g, b);
+        fill_framebuffer(&mut self.framebuffer, r, g, b);
 
         Ok(())
     }
 
     /// Optimized fill for solid color rectangles
+    ///
+    /// Instead of doing bound checks for each pixel, this implementation calculates the
+    /// drawable area first and then fills each row.
     fn fill_solid(&mut self, area: &Rectangle, color: Self::Color) -> Result<(), Self::Error> {
         let drawable_area = area.intersection(&self.bounding_box());
 
@@ -62,28 +53,28 @@ where
         }
 
         let display_width = self.config.width as usize;
-        let start_x = drawable_area.top_left.x as usize;
-        let start_y = drawable_area.top_left.y as usize;
         let rect_width = drawable_area.size.width as usize;
-        let rect_height = drawable_area.size.height as usize;
+        let start_x = drawable_area.top_left.x as usize;
+        let end_x = start_x + rect_width;
 
         let c = color.into_storage();
         let r = (c >> 16) as u8;
         let g = (c >> 8) as u8;
         let b = c as u8;
 
-        for row in 0..rect_height {
-            let y = start_y + row;
-            let row_start = (y * display_width + start_x) * 3;
-            let row_end = row_start + rect_width * 3;
+        for y in drawable_area.rows() {
+            let row_start_index = coordinates_to_index(start_x, y as usize, display_width);
+            let row_end_index = coordinates_to_index(end_x, y as usize, display_width);
+            let row = &mut self.framebuffer[row_start_index..row_end_index];
 
-            fill_framebuffer_with_color(&mut self.framebuffer[row_start..row_end], r, g, b);
+            fill_framebuffer(row, r, g, b);
         }
 
         Ok(())
     }
 
     /// Optimized contiguous fill
+    ///
     /// The trait requires the provided iterator to provide pixel color values in order from top
     /// left to the bottom right corner in a row-first order, this allows for more efficient
     /// filling than using `draw_iter` which bound checks each pixel coordinate individually.
@@ -100,11 +91,10 @@ where
         let display_width = self.config.width as usize;
         let area_width = area.size.width as usize;
         let clipped_width = drawable_area.size.width as usize;
-        let clipped_height = drawable_area.size.height as usize;
 
         // Calculate offset into color iterator for clipped region
-        let skip_left = (drawable_area.top_left.x - area.top_left.x) as usize;
-        let skip_top = (drawable_area.top_left.y - area.top_left.y) as usize;
+        let skip_left = drawable_area.top_left.x as usize - area.top_left.x as usize;
+        let skip_top = drawable_area.top_left.y as usize - area.top_left.y as usize;
 
         let mut colors = colors.into_iter();
 
@@ -113,29 +103,19 @@ where
             colors.next();
         }
 
-        let start_x = drawable_area.top_left.x as usize;
-        let start_y = drawable_area.top_left.y as usize;
-
-        for row in 0..clipped_height {
+        for y in drawable_area.rows() {
             // Skip pixels left of clipped area
             for _ in 0..skip_left {
                 colors.next();
             }
 
-            let y = start_y + row;
-            let row_start = (y * display_width + start_x) * 3;
-
-            for col in 0..clipped_width {
+            for x in drawable_area.columns() {
                 if let Some(color) = colors.next() {
-                    let idx = row_start + col * 3;
-                    let c = color.into_storage();
-                    let r = (c >> 16) as u8;
-                    let g = (c >> 8) as u8;
-                    let b = c as u8;
-
-                    self.framebuffer[idx] = r;
-                    self.framebuffer[idx + 1] = g;
-                    self.framebuffer[idx + 2] = b;
+                    write_color_to_framebuffer(
+                        &mut self.framebuffer,
+                        coordinates_to_index(x as usize, y as usize, display_width),
+                        color,
+                    );
                 }
             }
 
@@ -150,7 +130,25 @@ where
     }
 }
 
-fn fill_framebuffer_with_color(framebuffer: &mut [u8], r: u8, g: u8, b: u8) {
+#[inline(always)]
+fn write_color_to_framebuffer(framebuffer: &mut [u8], index: usize, color: Rgb888) {
+    let c = color.into_storage();
+    let r = (c >> 16) as u8;
+    let g = (c >> 8) as u8;
+    let b = c as u8;
+
+    framebuffer[index] = r;
+    framebuffer[index + 1] = g;
+    framebuffer[index + 2] = b;
+}
+
+#[inline(always)]
+fn coordinates_to_index(x: usize, y: usize, width: usize) -> usize {
+    (y * width + x) * 3
+}
+
+#[inline(always)]
+fn fill_framebuffer(framebuffer: &mut [u8], r: u8, g: u8, b: u8) {
     // Fast path for uniform colors (black, white, grayscale)
     if r == g && r == b {
         framebuffer.fill(r);
