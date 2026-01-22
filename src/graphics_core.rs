@@ -27,13 +27,14 @@ where
                 let index = ((y * self.config.width as u32 + x) * 3) as usize;
 
                 if index + 2 < self.framebuffer.len() {
-                    let r = (color.into_storage() >> 16) as u8; // 8-bit Red
-                    let g = (color.into_storage() >> 8) as u8; // 8-bit Green
-                    let b = color.into_storage() as u8; // 8-bit Blue
+                    let c = color.into_storage();
+                    let r = (c >> 16) as u8; // 8-bit Red
+                    let g = (c >> 8) as u8; // 8-bit Green
+                    let b = c as u8; // 8-bit Blue
 
-                    self.framebuffer[index] = r as u8;
-                    self.framebuffer[index + 1] = g as u8;
-                    self.framebuffer[index + 2] = b as u8;
+                    self.framebuffer[index] = r;
+                    self.framebuffer[index + 1] = g;
+                    self.framebuffer[index + 2] = b;
                 }
             }
         }
