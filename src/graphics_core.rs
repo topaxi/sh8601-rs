@@ -40,6 +40,29 @@ where
         }
         Ok(())
     }
+
+    /// Optimized clear - fill entire framebuffer
+    fn clear(&mut self, color: Self::Color) -> Result<(), Self::Error> {
+        let c = color.into_storage();
+        let r = (c >> 16) as u8;
+        let g = (c >> 8) as u8;
+        let b = c as u8;
+
+        // Fast path for uniform colors (black, white, grayscale)
+        if r == g && r == b {
+            self.framebuffer.fill(r);
+
+            return Ok(());
+        }
+
+        for chunk in self.framebuffer.chunks_exact_mut(3) {
+            chunk[0] = r;
+            chunk[1] = g;
+            chunk[2] = b;
+        }
+
+        Ok(())
+    }
 }
 
 // =========== embedded-graphics OriginDimensions Implementation ===========
