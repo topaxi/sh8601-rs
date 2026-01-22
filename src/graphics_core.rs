@@ -22,7 +22,7 @@ where
                     coordinates_to_index(x as usize, y as usize, self.config.width as usize);
 
                 if index + 2 < self.framebuffer.len() {
-                    write_color_to_framebuffer(&mut self.framebuffer, index, color);
+                    write_framebuffer(&mut self.framebuffer, index, color);
                 }
             }
         }
@@ -111,7 +111,7 @@ where
 
             for x in drawable_area.columns() {
                 if let Some(color) = colors.next() {
-                    write_color_to_framebuffer(
+                    write_framebuffer(
                         &mut self.framebuffer,
                         coordinates_to_index(x as usize, y as usize, display_width),
                         color,
@@ -131,7 +131,7 @@ where
 }
 
 #[inline(always)]
-fn write_color_to_framebuffer(framebuffer: &mut [u8], index: usize, color: Rgb888) {
+fn write_framebuffer(framebuffer: &mut [u8], index: usize, color: Rgb888) {
     let c = color.into_storage();
     let r = (c >> 16) as u8;
     let g = (c >> 8) as u8;
