@@ -58,29 +58,40 @@ impl ControllerInterface for Ws18AmoledDriver {
     }
 
     fn send_pixels(&mut self, pixels: &[u8]) -> Result<(), Self::Error> {
-        let ramwr_addr_val = (CMD_RAMWR as u32) << 8;
-        let ramwrc_addr_val = (CMD_RAMWRC as u32) << 8;
+        const RAMWR_ADDR_VAL: u32 = CMD_RAMWR << 8;
 
-        let mut chunks = pixels.chunks(DMA_CHUNK_SIZE).enumerate();
+        if pixels.len() <= DMA_CHUNK_SIZE {
+            return self.qspi.half_duplex_write(
+                DataMode::Quad,
+                Command::_8Bit(QSPI_PIXEL_OPCODE as u16, DataMode::Single),
+                Address::_24Bit(RAMWR_ADDR_VAL, DataMode::Single),
+                0,
+                pixels,
+            );
+        }
 
-        while let Some((index, chunk)) = chunks.next() {
-            if index == 0 {
-                self.qspi.half_duplex_write(
-                    DataMode::Quad,
-                    Command::_8Bit(QSPI_PIXEL_OPCODE as u16, DataMode::Single),
-                    Address::_24Bit(ramwr_addr_val, DataMode::Single),
-                    0,
-                    chunk,
-                )?;
-            } else {
-                self.qspi.half_duplex_write(
-                    DataMode::Quad,
-                    Command::_8Bit(QSPI_PIXEL_OPCODE as u16, DataMode::Single),
-                    Address::_24Bit(ramwrc_addr_val, DataMode::Single),
-                    0,
-                    chunk,
-                )?;
-            }
+        self.qspi.half_duplex_write(
+            DataMode::Quad,
+            Command::_8Bit(QSPI_PIXEL_OPCODE as u16, DataMode::Single),
+            Address::_24Bit(RAMWR_ADDR_VAL, DataMode::Single),
+            0,
+            &pixels[..DMA_CHUNK_SIZE],
+        )?;
+
+        self.send_pixels_continue(&pixels[DMA_CHUNK_SIZE..])
+    }
+
+    fn send_pixels_continue(&mut self, pixels: &[u8]) -> Result<(), Self::Error> {
+        const RAMWRC_ADDR_VAL: u32 = CMD_RAMWRC << 8;
+
+        for chunk in pixels.chunks(DMA_CHUNK_SIZE) {
+            self.qspi.half_duplex_write(
+                DataMode::Quad,
+                Command::_8Bit(QSPI_PIXEL_OPCODE as u16, DataMode::Single),
+                Address::_24Bit(RAMWRC_ADDR_VAL, DataMode::Single),
+                0,
+                chunk,
+            )?;
         }
         Ok(())
     }

@@ -90,8 +90,12 @@ pub trait ControllerInterface {
     /// Sends data bytes to the display following a command.
     fn send_command_with_data(&mut self, cmd: u8, data: &[u8]) -> Result<(), Self::Error>;
 
-    /// Sends pixel data
+    /// Sends pixel data using RAMWR (Memory Write Start) and RAMWRC (Memory Write Continue)
     fn send_pixels(&mut self, pixels: &[u8]) -> Result<(), Self::Error>;
+
+    /// Sends pixel data only using RAMWRC (Memory Write Continue)
+    /// Used for sending additional data after initial RAMWR without re-sending command
+    fn send_pixels_continue(&mut self, pixels: &[u8]) -> Result<(), Self::Error>;
 
     // fn read_data(&mut self, cmd: u8, buffer: &mut [u8], read_length: u8) -> Result<(), Self::Error>;
 }
@@ -484,27 +488,55 @@ where
         color: ColorMode,
     ) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
         self.set_window(x_start, y_start, x_end, y_end)?;
+
         let bytes_per_pixel = color.bytes_per_pixel();
         let fb_width = self.config.width as usize * bytes_per_pixel;
-        let width = (x_end - x_start + 1) as usize;
-        let height = (y_end - y_start + 1) as usize;
-        let mut pixel_data = alloc::vec::Vec::with_capacity(width * height * bytes_per_pixel);
+        let row_bytes = (x_end - x_start + 1) as usize * bytes_per_pixel;
+        let x_offset = x_start as usize * bytes_per_pixel;
 
-        for y in 0..height {
-            let offset = (y_start as usize + y) * fb_width + (x_start as usize * bytes_per_pixel);
-            let row_end = offset + (width * bytes_per_pixel);
-            if offset < self.framebuffer.len() && row_end <= self.framebuffer.len() {
-                pixel_data.extend_from_slice(&self.framebuffer[offset..row_end]);
-            } else {
+        // Full-width region fast path: send contiguous framebuffer slice directly
+        if x_start == 0 && x_end == self.config.width - 1 {
+            let start_offset = y_start as usize * fb_width;
+            let end_offset = (y_end as usize + 1) * fb_width;
+
+            if end_offset <= self.framebuffer.len() {
+                return self
+                    .interface
+                    .send_pixels(&self.framebuffer[start_offset..end_offset])
+                    .map_err(DriverError::InterfaceError);
+            }
+        }
+
+        // Partial-width region: send row by row
+        let first_row_offset = y_start as usize * fb_width + x_offset;
+        let first_row_end = first_row_offset + row_bytes;
+
+        if first_row_end > self.framebuffer.len() {
+            return Err(DriverError::InvalidConfiguration(
+                "Framebuffer slice out of bounds",
+            ));
+        }
+
+        self.interface
+            .send_pixels(&self.framebuffer[first_row_offset..first_row_end])
+            .map_err(DriverError::InterfaceError)?;
+
+        // Remaining rows use RAMWRC (via send_pixels_continue)
+        for y in (y_start + 1)..=y_end {
+            let row_offset = y as usize * fb_width + x_offset;
+            let row_end = row_offset + row_bytes;
+
+            if row_end > self.framebuffer.len() {
                 return Err(DriverError::InvalidConfiguration(
                     "Framebuffer slice out of bounds",
                 ));
             }
+
+            self.interface
+                .send_pixels_continue(&self.framebuffer[row_offset..row_end])
+                .map_err(DriverError::InterfaceError)?;
         }
 
-        self.interface
-            .send_pixels(&pixel_data)
-            .map_err(DriverError::InterfaceError)?;
         Ok(())
     }
 }
