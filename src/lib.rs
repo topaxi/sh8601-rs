@@ -20,6 +20,96 @@
 //! If you are going to use heap allocated framebuffer, you will need to make sure that an allocator is available in your environment.
 //! In some crates this is done by enabling the `alloc` feature.
 //!
+//! ## Color Modes
+//!
+//! The driver supports multiple color formats with different memory requirements:
+//!
+//! | Color Mode | Bytes/Pixel | Framebuffer Size (368×448) | Description |
+//! |------------|-------------|----------------------------|-------------|
+//! | `Gray8`    | 1           | 164 KB                     | 8-bit grayscale |
+//! | `Rgb565`   | 2           | 328 KB                     | 16-bit RGB (5-6-5) |
+//! | `Rgb666`   | 3           | 495 KB                     | 18-bit RGB (6-6-6) |
+//! | `Rgb888`   | 3           | 495 KB                     | 24-bit RGB (8-8-8, default) |
+//!
+//! ### Using Rgb888 (Default)
+//!
+//! ```ignore
+//! use sh8601_rs::{ColorMode, DisplaySize, Sh8601Driver, framebuffer_size};
+//! use embedded_graphics::prelude::*;
+//! use embedded_graphics::primitives::{Circle, PrimitiveStyle};
+//! use embedded_graphics::pixelcolor::Rgb888;
+//!
+//! const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+//! const FB_SIZE: usize = framebuffer_size(DISPLAY_SIZE, ColorMode::Rgb888);
+//!
+//! let mut display = Sh8601Driver::new_heap::<_, FB_SIZE>(
+//!     interface,
+//!     reset,
+//!     ColorMode::Rgb888,
+//!     DISPLAY_SIZE,
+//!     delay,
+//! )?;
+//!
+//! // Draw directly - Rgb888 is the default DrawTarget implementation
+//! Circle::new(Point::new(100, 100), 50)
+//!     .into_styled(PrimitiveStyle::with_fill(Rgb888::RED))
+//!     .draw(&mut display)?;
+//!
+//! display.flush()?;
+//! ```
+//!
+//! ### Using Other Color Modes
+//!
+//! For other color modes, use the wrapper methods `as_rgb565()`, `as_rgb666()`, or `as_gray8()`:
+//!
+//! ```ignore
+//! use embedded_graphics::pixelcolor::Rgb565;
+//!
+//! const FB_SIZE: usize = framebuffer_size(DISPLAY_SIZE, ColorMode::Rgb565);
+//!
+//! let mut display = Sh8601Driver::new_heap::<_, FB_SIZE>(
+//!     interface,
+//!     reset,
+//!     ColorMode::Rgb565,  // Initialize with Rgb565
+//!     DISPLAY_SIZE,
+//!     delay,
+//! )?;
+//!
+//! // Use as_rgb565() to get the appropriate DrawTarget
+//! let mut rgb565_display = display.as_rgb565();
+//! Circle::new(Point::new(100, 100), 50)
+//!     .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+//!     .draw(&mut rgb565_display)?;
+//!
+//! rgb565_display.flush()?;
+//! ```
+//!
+//! ### Grayscale Mode
+//!
+//! ```ignore
+//! use embedded_graphics::pixelcolor::Gray8;
+//!
+//! const FB_SIZE: usize = framebuffer_size(DISPLAY_SIZE, ColorMode::Gray8);
+//!
+//! let mut display = Sh8601Driver::new_heap::<_, FB_SIZE>(
+//!     interface,
+//!     reset,
+//!     ColorMode::Gray8,
+//!     DISPLAY_SIZE,
+//!     delay,
+//! )?;
+//!
+//! let mut gray_display = display.as_gray8();
+//! Circle::new(Point::new(100, 100), 50)
+//!     .into_styled(PrimitiveStyle::with_fill(Gray8::WHITE))
+//!     .draw(&mut gray_display)?;
+//!
+//! gray_display.flush()?;
+//! ```
+//!
+//! **Important**: The color mode used for drawing must match the color mode specified during initialization.
+//! Mismatched color modes will cause a panic with a descriptive error message.
+//!
 //! ## Feature Flags
 #![doc = document_features::document_features!()]
 //!
@@ -48,9 +138,14 @@ pub use displays::waveshare_18_amoled::*;
 extern crate alloc;
 
 mod graphics_core;
+pub use graphics_core::{Gray8DrawTarget, Rgb565DrawTarget, Rgb666DrawTarget};
+
+mod display;
+pub use display::{
+    Sh8601Gray8Display, Sh8601Rgb565Display, Sh8601Rgb666Display, Sh8601Rgb888Display,
+};
 
 use alloc::boxed::Box;
-use embedded_graphics_core::draw_target::DrawTarget;
 use embedded_hal::delay::DelayNs;
 
 /// Configuration for the display dimensions.
@@ -147,6 +242,7 @@ pub mod commands {
 }
 
 /// Color modes supported by the SH8601 display controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorMode {
     /// 16-bit RGB565 format
     Rgb565,
@@ -200,6 +296,10 @@ impl Framebuffer {
     pub fn len(&self) -> usize {
         self.as_slice().len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 // Implement Framebuffer Deref to allow accessing the underlying array
@@ -235,6 +335,7 @@ where
     reset: RST,
     framebuffer: Framebuffer,
     config: DisplaySize,
+    color_mode: ColorMode,
 }
 
 impl<IFACE, RST> Sh8601Driver<IFACE, RST>
@@ -257,13 +358,25 @@ where
     where
         DELAY: DelayNs,
     {
-        // Create a static array filled with zeros.
+        // Validate framebuffer size matches display dimensions and color mode
+        let expected_size = framebuffer_size(config, color);
+        assert_eq!(
+            N,
+            expected_size,
+            "Framebuffer size mismatch: provided {} bytes but expected {} bytes for {}x{} display with {:?}",
+            N,
+            expected_size,
+            config.width,
+            config.height,
+            color
+        );
 
         let mut driver = Self {
             interface,
             reset,
             framebuffer: Framebuffer::Static(&mut framebuffer[..]),
             config,
+            color_mode: color,
         };
         driver.hard_reset()?;
         driver.initialize_display(&mut delay, color)?;
@@ -283,12 +396,25 @@ where
     where
         DELAY: DelayNs,
     {
-        // Create a boxed array filled with zeros.
+        // Validate framebuffer size matches display dimensions and color mode
+        let expected_size = framebuffer_size(config, color);
+        assert_eq!(
+            N,
+            expected_size,
+            "Framebuffer size mismatch: provided {} bytes but expected {} bytes for {}x{} display with {:?}",
+            N,
+            expected_size,
+            config.width,
+            config.height,
+            color
+        );
+
         let mut driver = Self {
             interface,
             reset,
             framebuffer: Framebuffer::Heap(Box::new([0u8; N])),
             config,
+            color_mode: color,
         };
         driver.hard_reset()?;
         driver.initialize_display(&mut delay, color)?;
@@ -363,6 +489,11 @@ where
             .send_command_with_data(cmd, data)
             .map_err(DriverError::InterfaceError)?;
         Ok(())
+    }
+
+    /// Returns the color mode configured for this display
+    pub fn color_mode(&self) -> ColorMode {
+        self.color_mode
     }
 
     /// Sleep Mode In (SLPIN)
