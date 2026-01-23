@@ -2,7 +2,7 @@
 #![no_main]
 
 use sh8601_rs::{
-    ColorMode, DMA_CHUNK_SIZE, DisplaySize, ResetDriver, Sh8601Driver, Ws18AmoledDriver,
+    DMA_CHUNK_SIZE, DisplaySize, ResetDriver, Rgb888Mode, Sh8601Driver, Ws18AmoledDriver,
     framebuffer_size,
 };
 
@@ -96,14 +96,13 @@ fn main() -> ! {
     const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
 
     // Calculate framebuffer size based on the display size and color mode
-    const FB_SIZE: usize = framebuffer_size(DISPLAY_SIZE, ColorMode::Rgb888);
+    const FB_SIZE: usize = framebuffer_size::<Rgb888Mode>(DISPLAY_SIZE);
 
     // Instantiare and Initialize Display
     println!("Initializing SH8601 Display...");
-    let display_res = Sh8601Driver::new_heap::<_, FB_SIZE>(
+    let display_res = Sh8601Driver::<_, _, Rgb888Mode>::new_heap::<_, FB_SIZE>(
         ws_driver,
         reset,
-        ColorMode::Rgb888,
         DISPLAY_SIZE,
         delay,
     );

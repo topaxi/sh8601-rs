@@ -10,7 +10,7 @@ The driver currently incorporates support for the Waveshare 1.8" AMOLED display 
 
 1. Implement the `ControllerInterface` trait for the controller driving interface (e.g., QSPI).
 2. Implement the `ResetInterface` trait for the Reset pin.
-3. Create a `Sh8601Driver` instance with the display interface and reset pin.
+3. Create a `Sh8601Driver` instance with the display interface, reset pin, and color mode.
 4. Use the driver to draw using `embedded-graphics`.
 
 If you are going to use a heap-allocated framebuffer, you will need to ensure that an allocator is available in your environment. In some crates, this is done by enabling the `alloc` feature.

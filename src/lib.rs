@@ -14,11 +14,94 @@
 //!
 //! 1. Implement the `ControllerInterface` trait for the controller driving interface Ex. QSPI
 //! 2. Implement the `ResetInterface` trait for the Reset pin.
-//! 3. Create a `Sh8601Driver` instance with the display interface and reset pin.
+//! 3. Create a `Sh8601Driver` instance with the display interface, reset pin, and color mode.
 //! 4. Use the driver to draw using `embedded-graphics`.
 //!
 //! If you are going to use heap allocated framebuffer, you will need to make sure that an allocator is available in your environment.
 //! In some crates this is done by enabling the `alloc` feature.
+//!
+//! ## Color Modes
+//!
+//! The driver uses compile-time color mode configuration through marker types:
+//!
+//! | Color Mode    | Marker Type   | Bytes/Pixel | Framebuffer Size (368×448) |
+//! |---------------|---------------|-------------|----------------------------|
+//! | 8-bit Gray    | `Gray8Mode`   | 1           | 164 KB                     |
+//! | 16-bit RGB565 | `Rgb565Mode`  | 2           | 328 KB                     |
+//! | 18-bit RGB666 | `Rgb666Mode`  | 3           | 495 KB                     |
+//! | 24-bit RGB888 | `Rgb888Mode`  | 3           | 495 KB                     |
+//!
+//! ### Using Rgb565 (Recommended for embedded)
+//!
+//! ```ignore
+//! use sh8601_rs::{Sh8601Driver, Rgb565Mode, DisplaySize, framebuffer_size};
+//! use embedded_graphics::prelude::*;
+//! use embedded_graphics::primitives::{Circle, PrimitiveStyle};
+//! use embedded_graphics::pixelcolor::Rgb565;
+//!
+//! const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+//! const FB_SIZE: usize = framebuffer_size::<Rgb565Mode>(DISPLAY_SIZE);
+//!
+//! let mut display = Sh8601Driver::<_, _, Rgb565Mode>::new_heap::<_, FB_SIZE>(
+//!     interface,
+//!     reset,
+//!     DISPLAY_SIZE,
+//!     delay,
+//! )?;
+//!
+//! // Draw directly - the driver implements DrawTarget with the configured color type
+//! Circle::new(Point::new(100, 100), 50)
+//!     .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+//!     .draw(&mut display)?;
+//!
+//! display.flush()?;
+//! ```
+//!
+//! ### Using Rgb888 (Full color depth)
+//!
+//! ```ignore
+//! use sh8601_rs::{Sh8601Driver, Rgb888Mode, DisplaySize, framebuffer_size};
+//! use embedded_graphics::pixelcolor::Rgb888;
+//!
+//! const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+//! const FB_SIZE: usize = framebuffer_size::<Rgb888Mode>(DISPLAY_SIZE);
+//!
+//! let mut display = Sh8601Driver::<_, _, Rgb888Mode>::new_heap::<_, FB_SIZE>(
+//!     interface,
+//!     reset,
+//!     DISPLAY_SIZE,
+//!     delay,
+//! )?;
+//!
+//! Circle::new(Point::new(100, 100), 50)
+//!     .into_styled(PrimitiveStyle::with_fill(Rgb888::RED))
+//!     .draw(&mut display)?;
+//!
+//! display.flush()?;
+//! ```
+//!
+//! ### Grayscale Mode
+//!
+//! ```ignore
+//! use sh8601_rs::{Sh8601Driver, Gray8Mode, DisplaySize, framebuffer_size};
+//! use embedded_graphics::pixelcolor::Gray8;
+//!
+//! const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+//! const FB_SIZE: usize = framebuffer_size::<Gray8Mode>(DISPLAY_SIZE);
+//!
+//! let mut display = Sh8601Driver::<_, _, Gray8Mode>::new_heap::<_, FB_SIZE>(
+//!     interface,
+//!     reset,
+//!     DISPLAY_SIZE,
+//!     delay,
+//! )?;
+//!
+//! Circle::new(Point::new(100, 100), 50)
+//!     .into_styled(PrimitiveStyle::with_fill(Gray8::WHITE))
+//!     .draw(&mut display)?;
+//!
+//! display.flush()?;
+//! ```
 //!
 //! ## Feature Flags
 #![doc = document_features::document_features!()]
@@ -47,10 +130,13 @@ pub use displays::waveshare_18_amoled::*;
 
 extern crate alloc;
 
+mod color;
+pub use color::{ColorConfig, Gray8Mode, Rgb565Mode, Rgb666Mode, Rgb888Mode};
+
 mod graphics_core;
 
 use alloc::boxed::Box;
-use embedded_graphics_core::draw_target::DrawTarget;
+use core::marker::PhantomData;
 use embedded_hal::delay::DelayNs;
 
 /// Configuration for the display dimensions.
@@ -146,34 +232,20 @@ pub mod commands {
     pub const RDCTRLD1: u8 = 0x54; // Read CTRL Display 1
 }
 
-/// Color modes supported by the SH8601 display controller.
-pub enum ColorMode {
-    /// 16-bit RGB565 format
-    Rgb565,
-    /// 24-bit RGB888 format
-    Rgb888,
-    /// 18-bit RGB666 format
-    Rgb666,
-    /// 8-bit 256 Gray
-    Gray8,
-}
-
-impl ColorMode {
-    /// Returns the number of bytes per pixel for the color format.
-    pub const fn bytes_per_pixel(&self) -> usize {
-        match self {
-            ColorMode::Rgb565 => 2,
-            ColorMode::Rgb888 => 3,
-            ColorMode::Rgb666 => 3,
-            ColorMode::Gray8 => 1,
-        }
-    }
-}
-
 /// Computes the framebuffer size (in bytes) for a given display and color mode.
-/// Recommended to use when defining generic constant framebuffer size (const `N`) when instantiating display controller driver with `new_static` and `new_heap`.
-pub const fn framebuffer_size(display: DisplaySize, color: ColorMode) -> usize {
-    (display.width as usize) * (display.height as usize) * color.bytes_per_pixel()
+///
+/// This is a compile-time helper for defining the framebuffer size constant.
+///
+/// # Example
+///
+/// ```ignore
+/// use sh8601_rs::{DisplaySize, Rgb565Mode, framebuffer_size};
+///
+/// const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+/// const FB_SIZE: usize = framebuffer_size::<Rgb565Mode>(DISPLAY_SIZE);
+/// ```
+pub const fn framebuffer_size<C: ColorConfig>(display: DisplaySize) -> usize {
+    (display.width as usize) * (display.height as usize) * C::BYTES_PER_PIXEL
 }
 
 /// Frambuffer enum to hold either a static array or a boxed array
@@ -200,6 +272,10 @@ impl Framebuffer {
     pub fn len(&self) -> usize {
         self.as_slice().len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 // Implement Framebuffer Deref to allow accessing the underlying array
@@ -225,31 +301,66 @@ impl core::ops::DerefMut for Framebuffer {
 
 /// Main Driver for the SH8601 display controller.
 ///
-/// Generic over the display interface (`IFACE`) and reset pin (`RST`).
-pub struct Sh8601Driver<IFACE, RST>
+/// Generic over the display interface (`IFACE`), reset pin (`RST`), and color mode (`C`).
+///
+/// The color mode is specified at compile time using marker types that implement
+/// [`ColorConfig`], such as [`Rgb565Mode`], [`Rgb888Mode`], [`Rgb666Mode`], or [`Gray8Mode`].
+///
+/// # Example
+///
+/// ```ignore
+/// use sh8601_rs::{Sh8601Driver, Rgb565Mode, DisplaySize, framebuffer_size};
+///
+/// const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+/// const FB_SIZE: usize = framebuffer_size::<Rgb565Mode>(DISPLAY_SIZE);
+///
+/// let mut display = Sh8601Driver::<_, _, Rgb565Mode>::new_heap::<_, FB_SIZE>(
+///     interface, reset, DISPLAY_SIZE, delay
+/// )?;
+/// ```
+pub struct Sh8601Driver<IFACE, RST, C>
 where
     IFACE: ControllerInterface,
     RST: ResetInterface,
+    C: ColorConfig,
 {
     interface: IFACE,
     reset: RST,
     framebuffer: Framebuffer,
     config: DisplaySize,
+    _color: PhantomData<C>,
 }
 
-impl<IFACE, RST> Sh8601Driver<IFACE, RST>
+impl<IFACE, RST, C> Sh8601Driver<IFACE, RST, C>
 where
     IFACE: ControllerInterface,
     RST: ResetInterface,
+    C: ColorConfig,
 {
     /// Creates a new driver instance with static array and initializes the display.
-    /// N is a constant representing the framebuffer size (number of pixels).
-    /// N is calculated as `DisplaySize.width * DisplaySize.height * bytes_per_pixel`, where `bytes_per_pixel` is 2 for RGB565, 3 for RGB888, etc.
-    /// You can use the `framebuffer_size` helper function to calculate N.
+    ///
+    /// `N` is the framebuffer size in bytes, calculated as:
+    /// `width * height * bytes_per_pixel`
+    ///
+    /// Use the [`framebuffer_size`] helper function to calculate `N`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use sh8601_rs::{Sh8601Driver, Rgb565Mode, DisplaySize, framebuffer_size};
+    ///
+    /// const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+    /// const FB_SIZE: usize = framebuffer_size::<Rgb565Mode>(DISPLAY_SIZE);
+    ///
+    /// static mut FRAMEBUFFER: [u8; FB_SIZE] = [0u8; FB_SIZE];
+    ///
+    /// let display = Sh8601Driver::<_, _, Rgb565Mode>::new_static::<_, FB_SIZE>(
+    ///     interface, reset, DISPLAY_SIZE, delay, unsafe { &mut FRAMEBUFFER }
+    /// )?;
+    /// ```
     pub fn new_static<DELAY, const N: usize>(
         interface: IFACE,
         reset: RST,
-        color: ColorMode,
         config: DisplaySize,
         mut delay: DELAY,
         framebuffer: &'static mut [u8; N],
@@ -257,41 +368,79 @@ where
     where
         DELAY: DelayNs,
     {
-        // Create a static array filled with zeros.
+        let expected_size = framebuffer_size::<C>(config);
+        assert_eq!(
+            N,
+            expected_size,
+            "Framebuffer size mismatch: provided {} bytes but expected {} bytes for {}x{} display with {} bpp",
+            N,
+            expected_size,
+            config.width,
+            config.height,
+            C::BYTES_PER_PIXEL
+        );
 
         let mut driver = Self {
             interface,
             reset,
             framebuffer: Framebuffer::Static(&mut framebuffer[..]),
             config,
+            _color: PhantomData,
         };
         driver.hard_reset()?;
-        driver.initialize_display(&mut delay, color)?;
+        driver.initialize_display(&mut delay)?;
         Ok(driver)
     }
 
-    /// Creates a new driver instance with a boxed array framebuffer.
-    /// N is a constant representing the framebuffer size (number of pixels).
-    /// N is calculated as `DisplaySize.width * DisplaySize.height * bytes_per_pixel`, where `bytes_per_pixel` is 2 for RGB565, 3 for RGB888, etc.
+    /// Creates a new driver instance with a heap-allocated framebuffer.
+    ///
+    /// `N` is the framebuffer size in bytes, calculated as:
+    /// `width * height * bytes_per_pixel`
+    ///
+    /// Use the [`framebuffer_size`] helper function to calculate `N`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use sh8601_rs::{Sh8601Driver, Rgb565Mode, DisplaySize, framebuffer_size};
+    ///
+    /// const DISPLAY_SIZE: DisplaySize = DisplaySize::new(368, 448);
+    /// const FB_SIZE: usize = framebuffer_size::<Rgb565Mode>(DISPLAY_SIZE);
+    ///
+    /// let display = Sh8601Driver::<_, _, Rgb565Mode>::new_heap::<_, FB_SIZE>(
+    ///     interface, reset, DISPLAY_SIZE, delay
+    /// )?;
+    /// ```
     pub fn new_heap<DELAY, const N: usize>(
         interface: IFACE,
         reset: RST,
-        color: ColorMode,
         config: DisplaySize,
         mut delay: DELAY,
     ) -> Result<Self, DriverError<IFACE::Error, RST::Error>>
     where
         DELAY: DelayNs,
     {
-        // Create a boxed array filled with zeros.
+        let expected_size = framebuffer_size::<C>(config);
+        assert_eq!(
+            N,
+            expected_size,
+            "Framebuffer size mismatch: provided {} bytes but expected {} bytes for {}x{} display with {} bpp",
+            N,
+            expected_size,
+            config.width,
+            config.height,
+            C::BYTES_PER_PIXEL
+        );
+
         let mut driver = Self {
             interface,
             reset,
             framebuffer: Framebuffer::Heap(Box::new([0u8; N])),
             config,
+            _color: PhantomData,
         };
         driver.hard_reset()?;
-        driver.initialize_display(&mut delay, color)?;
+        driver.initialize_display(&mut delay)?;
         Ok(driver)
     }
 
@@ -305,7 +454,6 @@ where
     pub fn initialize_display<DELAY>(
         &mut self,
         delay: &mut DELAY,
-        color: ColorMode,
     ) -> Result<(), DriverError<IFACE::Error, RST::Error>>
     where
         DELAY: DelayNs,
@@ -314,24 +462,7 @@ where
         delay.delay_ms(10);
         self.send_command(commands::SLPOUT)?;
         delay.delay_ms(120);
-        match color {
-            ColorMode::Rgb565 => {
-                // Set pixel format to RGB565
-                self.send_command_with_data(commands::COLMOD, &[0x55])?;
-            }
-            ColorMode::Rgb888 => {
-                // Set pixel format to RGB888
-                self.send_command_with_data(commands::COLMOD, &[0x77])?;
-            }
-            ColorMode::Rgb666 => {
-                // Set pixel format to RGB666
-                self.send_command_with_data(commands::COLMOD, &[0x66])?;
-            }
-            ColorMode::Gray8 => {
-                // Set pixel format to 8-bit grayscale
-                self.send_command_with_data(commands::COLMOD, &[0x11])?;
-            }
-        }
+        self.send_command_with_data(commands::COLMOD, &[C::COLMOD_VALUE])?;
         delay.delay_ms(5);
         self.send_command_with_data(commands::MADCTL, &[0x00])?;
         self.send_command_with_data(commands::TESCAN, &[0x01, 0xC5])?;
@@ -363,6 +494,11 @@ where
             .send_command_with_data(cmd, data)
             .map_err(DriverError::InterfaceError)?;
         Ok(())
+    }
+
+    /// Returns the number of bytes per pixel for the configured color mode.
+    pub const fn bytes_per_pixel(&self) -> usize {
+        C::BYTES_PER_PIXEL
     }
 
     /// Sleep Mode In (SLPIN)
@@ -485,11 +621,10 @@ where
         x_end: u16,
         y_start: u16,
         y_end: u16,
-        color: ColorMode,
     ) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
         self.set_window(x_start, y_start, x_end, y_end)?;
 
-        let bytes_per_pixel = color.bytes_per_pixel();
+        let bytes_per_pixel = C::BYTES_PER_PIXEL;
         let fb_width = self.config.width as usize * bytes_per_pixel;
         let row_bytes = (x_end - x_start + 1) as usize * bytes_per_pixel;
         let x_offset = x_start as usize * bytes_per_pixel;
