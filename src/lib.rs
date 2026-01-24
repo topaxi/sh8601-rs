@@ -226,6 +226,11 @@ pub mod commands {
     pub const COLMOD: u8 = 0x3A; // Control Interface Pixel Format
     pub const RAMWRC: u8 = 0x3C; // Memory Write Continue
     pub const TESCAN: u8 = 0x44; // Set Tear Scan Line
+    pub const AODMOFF: u8 = 0x48; // AOD Mode Off
+    pub const AODMON: u8 = 0x49; // AOD Mode On
+    pub const WRAOD: u8 = 0x4A; // Write AOD Brightness
+    pub const RDAOD: u8 = 0x4B; // Read AOD Brightness
+    pub const DEEPSTBY: u8 = 0x4F; // Deep Standby On
     pub const WRDISBV: u8 = 0x51; // Write Display Brightness Value
     pub const RDDISBV: u8 = 0x52; // Read Display Brightness Value
     pub const WRCTRLD1: u8 = 0x53; // Write CTRL Display 1
@@ -600,6 +605,36 @@ where
         let val_lsb = (brightness & 0xFF) as u8;
         let val_msb = ((brightness >> 8) & 0x03) as u8;
         self.send_command_with_data(commands::WRDISBV, &[val_lsb, val_msb])
+    }
+
+    /// Enters Always-On Display (AOD) mode.
+    /// In AOD mode, the display operates in a low-power state while still showing content.
+    pub fn aod_mode_on(&mut self) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
+        self.send_command(commands::AODMON)
+    }
+
+    /// Exits Always-On Display (AOD) mode.
+    /// Returns the display to normal operation mode.
+    pub fn aod_mode_off(&mut self) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
+        self.send_command(commands::AODMOFF)
+    }
+
+    /// Sets the AOD mode brightness (0x0000 - 0xFFFF).
+    /// This brightness setting applies specifically when the display is in AOD mode.
+    pub fn set_aod_brightness(
+        &mut self,
+        value: u16,
+    ) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
+        let val_lsb = (value & 0xFF) as u8;
+        let val_msb = ((value >> 8) & 0xFF) as u8;
+        self.send_command_with_data(commands::WRAOD, &[val_lsb, val_msb])
+    }
+
+    /// Enters deep standby mode (lowest power state).
+    /// In deep standby, the display is essentially off and typically requires a hardware reset to wake.
+    /// This is a hard-off state with minimal power consumption.
+    pub fn deep_standby_on(&mut self) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
+        self.send_command(commands::DEEPSTBY)
     }
 
     /// Writes the contents of the framebuffer to the display RAM.
