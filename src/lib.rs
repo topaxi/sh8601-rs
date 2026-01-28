@@ -705,4 +705,22 @@ where
 
         Ok(())
     }
+
+    /// Returns mutable access to the raw framebuffer bytes.
+    ///
+    /// This is useful for direct pixel manipulation operations like memmove-based
+    /// scrolling optimization. The framebuffer is in row-major order with pixels
+    /// stored according to the configured ColorMode (e.g., 2 bytes per pixel for RGB565).
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure writes stay within bounds and use the correct pixel format.
+    pub fn framebuffer_mut(&mut self) -> &mut [u8] {
+        self.framebuffer.as_mut_slice()
+    }
+
+    /// Returns the display configuration (width and height).
+    pub fn display_size(&self) -> DisplaySize {
+        self.config
+    }
 }
