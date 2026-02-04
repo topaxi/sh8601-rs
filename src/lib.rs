@@ -739,9 +739,4 @@ where
     pub fn framebuffer_mut(&mut self) -> &mut [u8] {
         self.framebuffer.as_mut_slice()
     }
-
-    /// Returns the display configuration (width and height).
-    pub fn display_size(&self) -> DisplaySize {
-        self.config
-    }
 }
