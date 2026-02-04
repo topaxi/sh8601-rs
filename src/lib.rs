@@ -637,6 +637,23 @@ where
         self.send_command(commands::DEEPSTBY)
     }
 
+    /// Writes the pixel data to the display RAM.
+    /// This is typically called for low-level pixel data updates, like writing widget updates directly.
+    pub fn write_raw(
+        &mut self,
+        x_start: u16,
+        x_end: u16,
+        y_start: u16,
+        y_end: u16,
+        pixel_data: &[u8],
+    ) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
+        self.set_window(x_start, y_start, x_end, y_end)?;
+        self.interface
+            .send_pixels(pixel_data)
+            .map_err(DriverError::InterfaceError)?;
+        Ok(())
+    }
+
     /// Writes the contents of the framebuffer to the display RAM.
     /// This is typically called after drawing operations are complete.
     pub fn flush(&mut self) -> Result<(), DriverError<IFACE::Error, RST::Error>> {
