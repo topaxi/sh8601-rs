@@ -90,9 +90,14 @@ impl ColorConfig for Rgb565Mode {
     }
 
     #[inline]
-    fn is_uniform(_bytes: &Self::Bytes) -> Option<u8> {
-        // RGB565 rarely has uniform bytes due to 5-6-5 encoding
-        None
+    fn is_uniform(bytes: &Self::Bytes) -> Option<u8> {
+        // RGB565 rarely has uniform bytes due to 5-6-5 encoding,
+        // but black and white are common enough to optimize for.
+        if bytes[0] == bytes[1] {
+            Some(bytes[0])
+        } else {
+            None
+        }
     }
 }
 
@@ -230,4 +235,3 @@ impl ColorConfig for Gray8Mode {
         Some(bytes[0])
     }
 }
-
